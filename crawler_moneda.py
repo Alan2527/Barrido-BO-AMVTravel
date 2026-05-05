@@ -1,5 +1,4 @@
 import time
-import re
 import os
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -7,14 +6,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 
-def correr_crawler_profundo():
-    # Variables de entorno (Configuradas en GitHub Secrets para mayor seguridad)
+def mapear_pantallas_buscar():
     USER = os.getenv("BO_USER", "Pablo@amv.travel")
     PASSWORD = os.getenv("BO_PASS", "amvtest")
-    PALABRA_A_BUSCAR = r'\bARS\b'
-    MAX_PAGINAS = 150 # Límite de seguridad para que no corra al infinito
+    MAX_PAGINAS = 150 
 
-    # Configuración fundamental para GitHub Actions (Modo Headless)
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
@@ -45,9 +41,9 @@ def correr_crawler_profundo():
     # ==========================================
     urls_pendientes = set()
     urls_visitadas = set()
-    fallas_encontradas = []
+    pantallas_con_buscar = []
 
-    # Arrancamos capturando el menú inicial
+    print("Recolectando URLs del menú inicial...")
     links_menu = driver.find_elements(By.XPATH, "//nav[@role='navigation']//a[@href]") 
     for link in links_menu:
         url = link.get_attribute("href")
@@ -55,9 +51,9 @@ def correr_crawler_profundo():
             urls_pendientes.add(url)
 
     # ==========================================
-    # 3. ESCANEO PROFUNDO (CRAWLING DINÁMICO)
+    # 3. ESCANEO PROFUNDO (BUSCANDO BOTONES ASP.NET)
     # ==========================================
-    print("\nIniciando barrido profundo buscando 'ARS'...")
+    print("\nIniciando barrido profundo buscando botones 'Buscar'...")
     
     while urls_pendientes and len(urls_visitadas) < MAX_PAGINAS:
         url_actual = urls_pendientes.pop()
@@ -70,19 +66,51 @@ def correr_crawler_profundo():
         
         try:
             driver.get(url_actual)
-            time.sleep(3) # Espera AJAX
+            time.sleep(3) 
             
-            # A. BUSCAR LA PALABRA EN LA PANTALLA ACTUAL
-            texto_body = driver.find_element(By.TAG_NAME, "body").text.upper()
-            if re.search(PALABRA_A_BUSCAR, texto_body):
-                fallas_encontradas.append(url_actual)
-                print(f"   [!] ALERTA: Se encontró 'ARS' en esta pantalla.")
+            tiene_buscar = False
             
-            # B. RECOLECTAR NUEVOS LINKS DENTRO DE ESTA PANTALLA
+            # A. VALIDAR SI EXISTE EL BOTÓN "BUSCAR" (Estrategia combinada)
+            
+            # 1. Buscar en etiquetas <a> (Como el de la captura ASP.NET)
+            enlaces = driver.find_elements(By.TAG_NAME, "a")
+            for enlace in enlaces:
+                texto_enlace = enlace.text.upper()
+                id_enlace = enlace.get_attribute("id") or ""
+                # Si dice BUSCAR adentro del <span> o si el ID es el del filtro
+                if "BUSCAR" in texto_enlace or "btnFilter" in id_enlace:
+                    tiene_buscar = True
+                    break
+            
+            # 2. Respaldo: Buscar en etiquetas <button> estándar
+            if not tiene_buscar:
+                botones = driver.find_elements(By.TAG_NAME, "button")
+                for btn in botones:
+                    if "BUSCAR" in btn.text.upper():
+                        tiene_buscar = True
+                        break
+            
+            # 3. Respaldo: Buscar en <input>
+            if not tiene_buscar:
+                inputs = driver.find_elements(By.TAG_NAME, "input")
+                for inp in inputs:
+                    tipo = inp.get_attribute("type")
+                    valor = inp.get_attribute("value") or ""
+                    if tipo in ["submit", "button"] and "BUSCAR" in valor.upper():
+                        tiene_buscar = True
+                        break
+            
+            # Si detectó el botón en cualquiera de sus formas, anota la URL
+            if tiene_buscar:
+                pantallas_con_buscar.append(url_actual)
+                print(f"   [!] ATENCIÓN: Botón 'Buscar' detectado en esta pantalla.")
+            
+            # B. RECOLECTAR NUEVOS LINKS PARA SEGUIR NAVEGANDO
             nuevos_links = driver.find_elements(By.XPATH, "//a[@href]")
             for link in nuevos_links:
                 nueva_url = link.get_attribute("href")
                 
+                # Omitimos navegar por los enlaces javascript como el __doPostBack del botón
                 if (nueva_url and 
                     "bo.amv.travel" in nueva_url and 
                     "ctl00_lnkSignOut" not in nueva_url and 
@@ -99,20 +127,19 @@ def correr_crawler_profundo():
     # 4. REPORTE FINAL
     # ==========================================
     print("\n==================================================")
-    print("                REPORTE DE EJECUCIÓN              ")
-    print(f"           Páginas escaneadas: {len(urls_visitadas)}")
+    print("         MAPEO DE PANTALLAS CON BOTÓN BUSCAR      ")
+    print(f"           Páginas escaneadas en total: {len(urls_visitadas)}")
     print("==================================================")
     
-    if not fallas_encontradas:
-        print("✅ ÉXITO TOTAL: Sistema limpio de 'ARS'.")
-        driver.quit()
-        exit(0)
+    if not pantallas_con_buscar:
+        print("✅ No se encontraron botones 'Buscar' en las pantallas escaneadas.")
     else:
-        print(f"❌ BUG: 'ARS' encontrado en {len(fallas_encontradas)} pantallas:")
-        for url_falla in set(fallas_encontradas): 
+        urls_unicas = set(pantallas_con_buscar)
+        print(f"⚠️ Se detectaron {len(urls_unicas)} pantallas que requieren accionar un botón 'Buscar':")
+        for url_falla in urls_unicas: 
             print(f"  - {url_falla}")
-        driver.quit()
-        exit(1)
+            
+    driver.quit()
 
 if __name__ == "__main__":
-    correr_crawler_profundo()
+    mapear_pantallas_buscar()
