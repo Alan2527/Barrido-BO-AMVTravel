@@ -7,81 +7,91 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 
-def correr_crawler_moneda():
+def correr_crawler_profundo():
     # Variables de entorno (Configuradas en GitHub Secrets para mayor seguridad)
     USER = os.getenv("BO_USER", "Pablo@amv.travel")
     PASSWORD = os.getenv("BO_PASS", "amvtest")
+    PALABRA_A_BUSCAR = r'\bARS\b'
+    MAX_PAGINAS = 150 # Límite de seguridad para que no corra al infinito
 
     # Configuración fundamental para GitHub Actions (Modo Headless)
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080") # Tamaño virtual para evitar problemas responsive
+    chrome_options.add_argument("--window-size=1920,1080")
     
     driver = webdriver.Chrome(options=chrome_options)
     wait = WebDriverWait(driver, 15)
     
     # ==========================================
-    # 1. LOGUEO EN EL SISTEMA
+    # 1. LOGUEO
     # ==========================================
     print("Iniciando sesión en el BO (Modo Headless)...")
     driver.get("https://qa.bo.amv.travel/login")
-    
     try:
-        # Ingresar credenciales
         wait.until(EC.presence_of_element_located((By.NAME, "txtUser"))).send_keys(USER)
         driver.find_element(By.NAME, "txtPassword").send_keys(PASSWORD)
         driver.find_element(By.NAME, "btnLogin").click()
-        
-        # Validar login exitoso buscando el botón de logout
         wait.until(EC.presence_of_element_located((By.ID, "ctl00_lnkSignOut")))
         print("✅ Login exitoso.")
     except Exception as e:
-        print(f"❌ Error al intentar loguearse: {e}")
-        driver.quit()
-        exit(1) # Forzamos que GitHub Action falle si no hay login
-
-    # ==========================================
-    # 2. RECOLECTAR URLs DEL MENÚ LATERAL
-    # ==========================================
-    print("Recolectando URLs a escanear desde el menú...")
-    urls_a_visitar = set()
-    
-    try:
-        links_menu = driver.find_elements(By.XPATH, "//nav[@role='navigation']//a[@href]") 
-        for link in links_menu:
-            url = link.get_attribute("href")
-            # Filtramos links válidos del sistema, excluyendo el logout
-            if url and "bo.amv.travel" in url and "ctl00_lnkSignOut" not in url:
-                if not url.endswith("#"):
-                    urls_a_visitar.add(url)
-        print(f"🔍 Se encontraron {len(urls_a_visitar)} pantallas únicas.")
-    except Exception as e:
-        print(f"❌ Error al leer el menú: {e}")
+        print(f"❌ Error en login: {e}")
         driver.quit()
         exit(1)
 
     # ==========================================
-    # 3. ESCANEO DE PANTALLAS (CRAWLER)
+    # 2. INICIALIZAR LA COLA DE NAVEGACIÓN
     # ==========================================
+    urls_pendientes = set()
+    urls_visitadas = set()
     fallas_encontradas = []
+
+    # Arrancamos capturando el menú inicial
+    links_menu = driver.find_elements(By.XPATH, "//nav[@role='navigation']//a[@href]") 
+    for link in links_menu:
+        url = link.get_attribute("href")
+        if url and "bo.amv.travel" in url and "ctl00_lnkSignOut" not in url and not url.endswith("#"):
+            urls_pendientes.add(url)
+
+    # ==========================================
+    # 3. ESCANEO PROFUNDO (CRAWLING DINÁMICO)
+    # ==========================================
+    print("\nIniciando barrido profundo buscando 'ARS'...")
     
-    print("\nIniciando barrido de pantallas buscando 'TPESO COLOMBIA'...")
-    for i, url in enumerate(urls_a_visitar, 1):
-        print(f"[{i}/{len(urls_a_visitar)}] Analizando: {url}")
+    while urls_pendientes and len(urls_visitadas) < MAX_PAGINAS:
+        url_actual = urls_pendientes.pop()
+        
+        if url_actual in urls_visitadas:
+            continue
+            
+        urls_visitadas.add(url_actual)
+        print(f"[{len(urls_visitadas)}] Analizando: {url_actual}")
+        
         try:
-            driver.get(url)
-            # Tiempo de espera para que carguen las grillas de datos (AJAX)
-            time.sleep(3) 
+            driver.get(url_actual)
+            time.sleep(3) # Espera AJAX
             
-            # Extraemos todo el texto visible y lo pasamos a mayúsculas
+            # A. BUSCAR LA PALABRA EN LA PANTALLA ACTUAL
             texto_body = driver.find_element(By.TAG_NAME, "body").text.upper()
+            if re.search(PALABRA_A_BUSCAR, texto_body):
+                fallas_encontradas.append(url_actual)
+                print(f"   [!] ALERTA: Se encontró 'ARS' en esta pantalla.")
             
-            # Buscamos la frase exacta "TPESO COLOMBIA"
-            if re.search(r'\bTPESO COLOMBIA\b', texto_body):
-                fallas_encontradas.append(url)
-                print(f"   [!] ALERTA: Se encontró 'TPESO COLOMBIA' visible.")
+            # B. RECOLECTAR NUEVOS LINKS DENTRO DE ESTA PANTALLA
+            nuevos_links = driver.find_elements(By.XPATH, "//a[@href]")
+            for link in nuevos_links:
+                nueva_url = link.get_attribute("href")
+                
+                if (nueva_url and 
+                    "bo.amv.travel" in nueva_url and 
+                    "ctl00_lnkSignOut" not in nueva_url and 
+                    not nueva_url.endswith("#") and 
+                    "javascript:" not in nueva_url):
+                    
+                    if nueva_url not in urls_visitadas:
+                        urls_pendientes.add(nueva_url)
+                        
         except Exception as e:
             print(f"   [x] Error al leer la pantalla: {e}")
 
@@ -90,17 +100,19 @@ def correr_crawler_moneda():
     # ==========================================
     print("\n==================================================")
     print("                REPORTE DE EJECUCIÓN              ")
+    print(f"           Páginas escaneadas: {len(urls_visitadas)}")
     print("==================================================")
+    
     if not fallas_encontradas:
-        print("✅ ÉXITO TOTAL: No se encontraron referencias a 'TPESO COLOMBIA'.")
+        print("✅ ÉXITO TOTAL: Sistema limpio de 'ARS'.")
         driver.quit()
-        exit(0) # Salida exitosa (Verde en GitHub Actions)
+        exit(0)
     else:
-        print(f"❌ BUG: Se encontró 'TPESO COLOMBIA' en {len(fallas_encontradas)} pantallas:")
-        for url_falla in fallas_encontradas:
+        print(f"❌ BUG: 'ARS' encontrado en {len(fallas_encontradas)} pantallas:")
+        for url_falla in set(fallas_encontradas): 
             print(f"  - {url_falla}")
         driver.quit()
-        exit(1) # Salida con error (Rojo en GitHub Actions)
+        exit(1)
 
 if __name__ == "__main__":
-    correr_crawler_moneda()
+    correr_crawler_profundo()
