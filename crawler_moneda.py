@@ -12,7 +12,7 @@ def correr_crawler_profundo():
     USER = os.getenv("BO_USER", "Pablo@amv.travel")
     PASSWORD = os.getenv("BO_PASS", "amvtest")
     PALABRA_A_BUSCAR = r'\bARS\b'
-    MAX_PAGINAS = 150 # Límite de seguridad para que no corra al infinito
+    MAX_PAGINAS = 300 
 
     # Configuración fundamental para GitHub Actions (Modo Headless)
     chrome_options = Options()
