@@ -28,7 +28,7 @@ def correr_crawler_profundo():
     # 1. LOGUEO
     # ==========================================
     print("Iniciando sesión en el BO (Modo Headless)...")
-    driver.get("https://qa.bo.amv.travel/login")
+    driver.get("https://preprod.bo.amv.travel/login")
     try:
         wait.until(EC.presence_of_element_located((By.NAME, "txtUser"))).send_keys(USER)
         driver.find_element(By.NAME, "txtPassword").send_keys(PASSWORD)
