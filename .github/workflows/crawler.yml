@@ -3,8 +3,6 @@ name: 🕷️ QA Crawler Moneda (Test1)
 # ¿Cuándo se va a ejecutar este script?
 on:
   workflow_dispatch: # Permite ejecutarlo manualmente desde un botón en la interfaz de GitHub
-  schedule:
-    - cron: '0 2 * * *' # Opcional: Se ejecuta automáticamente a las 2 AM todos los días
 
 jobs:
   run-crawler:
